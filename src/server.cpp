@@ -28,6 +28,7 @@ void *client_handler_func(void *arg) {
         std::lock_guard<std::mutex> lock(threads_mutex);
     }
 
+    // removes thread_id from set when client disconnects
     struct thread_holder_t
     {
         ~thread_holder_t() {
@@ -36,6 +37,10 @@ void *client_handler_func(void *arg) {
         }
         pthread_t thread;
     } holder { pthread_self() };
+
+    // Все cancellation point вызовут деструкторы
+    // структур, созданных в процессе выполнения  client_handler_func,
+    // поэтому ресурсы занимаемые этим потоком будут корректно освобождены
 
     client_handler(static_cast<stream_socket*>(arg), holder.thread).process_client();
 
@@ -69,6 +74,8 @@ void *socket_listener_func(void *arg) {
             }
         }
     } catch (std::exception const &ex) {
+        // Можно завершить работу сервера, т.к. последующие вызовы accept_one_client
+        // также будут бросать исключения.
         std::cerr << "failed to accept new client: " << ex.what() << std::endl;
     }
 

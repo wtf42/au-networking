@@ -40,17 +40,26 @@ void client_handler::process_client() {
         while (true) {
             pthread_testcancel();
 
+            // После каждого обращения клиента сервер кроме ответа
+            // посылает нотификации об откликах на их вакансии.
             if (process_one_reply()) {
                 continue;
             }
+
+            // Сервер не предоставляет гарантии доставки сообщения всем клиентам.
+            // Поэтому нам не требуется дожидаться ответа об успешном получении
+            // сообщения каждым клиентом
             message_type_t type;
             recv(socket.get(), type);
             process_message(static_cast<message_types>(type));
+
             if (type == exit_query_type) {
                 return;
             }
         }
     } catch (std::exception const &ex) {
+        // Сервер не пытается восстанавливать соединение с
+        // аварийно завершившимся клиентом
         std::cerr << "failed to process client "
                   << name << ": "
                   << ex.what() << std::endl;
