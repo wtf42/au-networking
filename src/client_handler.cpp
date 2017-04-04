@@ -18,7 +18,6 @@ struct vacancy {
     };
 
     uint16_t idx;
-    client_id_t owner_id;
     std::string owner_name;
     std::string description;
 
@@ -27,12 +26,12 @@ struct vacancy {
 
 std::mutex clientsdata_mutex;
 std::vector<vacancy> vacancies;
-std::map<client_id_t, std::queue<vacancy::reply>> replies;
+std::map<std::string, std::queue<vacancy::reply>> replies;
 
 
-client_handler::client_handler(stream_socket *socket, client_id_t client_id)
+client_handler::client_handler(stream_socket *socket)
         : socket(socket)
-        , client_id(client_id)
+        , name("anonymous")
 {}
 
 void client_handler::process_client() {
@@ -120,7 +119,6 @@ void client_handler::process_message(message_types type) {
                 vacancies.push_back(
                         {
                                 idx,
-                                client_id,
                                 name,
                                 qmsg.description,
                                 {}
@@ -144,7 +142,7 @@ void client_handler::process_message(message_types type) {
                     vacancy &v = vacancies[qmsg.vacancy_id];
                     rmsg.reply_count = (uint16_t)v.replies.size();
                     v.replies.push_back(reply);
-                    replies[v.owner_id].push(reply);
+                    replies[v.owner_name].push(reply);
                 }
             }
             send(socket.get(), rmsg, reply_response_type);
@@ -163,14 +161,14 @@ bool client_handler::process_one_reply() {
     vacancy::reply reply;
     {
         std::lock_guard<std::mutex> lock(clientsdata_mutex);
-        if (!replies.count(client_id)) {
+        if (!replies.count(name)) {
             return false;
         }
-        if (replies[client_id].empty()) {
+        if (replies[name].empty()) {
             return false;
         }
-        reply = replies[client_id].front();
-        replies[client_id].pop();
+        reply = replies[name].front();
+        replies[name].pop();
     }
     reply_notification_message msg;
     msg.vacancy_id = reply.vacancy_idx;

@@ -6,12 +6,11 @@
 #include "protocol.h"
 
 
-typedef pthread_t client_id_t;
 void print(std::string const& msg);
 
 struct client_handler
 {
-    client_handler(stream_socket *socket, client_id_t client_id);
+    client_handler(stream_socket *socket);
 
     void process_client();
 
@@ -21,7 +20,6 @@ private:
 
 private:
     std::unique_ptr<stream_socket> socket;
-    client_id_t client_id;
     std::string name;
 };
 

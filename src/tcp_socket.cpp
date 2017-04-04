@@ -8,9 +8,12 @@
 
 
 tcp_server_socket::tcp_server_socket(hostname host, tcp_port port)
-        : socket()
+        : socket(-1)
 {
     addrinfo_provider info(host, port);
+    socket = tcp_socket(::socket(info.res->ai_family,
+                                 info.res->ai_socktype,
+                                 info.res->ai_protocol));
 
     int optval = 1;
     if (setsockopt(socket.fd(), SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval))) {

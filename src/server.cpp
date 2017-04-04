@@ -42,7 +42,7 @@ void *client_handler_func(void *arg) {
     // структур, созданных в процессе выполнения  client_handler_func,
     // поэтому ресурсы занимаемые этим потоком будут корректно освобождены
 
-    client_handler(static_cast<stream_socket*>(arg), holder.thread).process_client();
+    client_handler(static_cast<stream_socket*>(arg)).process_client();
 
     return NULL;
 }
@@ -76,7 +76,8 @@ void *socket_listener_func(void *arg) {
     } catch (std::exception const &ex) {
         // Можно завершить работу сервера, т.к. последующие вызовы accept_one_client
         // также будут бросать исключения.
-        std::cerr << "failed to accept new client: " << ex.what() << std::endl;
+        std::cerr << "failed to accept new client: " << ex.what() << std::endl
+                  << "server stopped!" << std::endl;
     }
 
     return NULL;
@@ -102,7 +103,7 @@ int main(int argc, char *argv[]) {
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
     if (pthread_create(&listener_thread, &attr, socket_listener_func, socket.release())) {
         std::cerr << "failed to create socket listener thread" << std::endl;
-        return 0;
+        return 1;
     }
     pthread_attr_destroy(&attr);
 

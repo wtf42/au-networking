@@ -33,7 +33,7 @@ include $(wildcard bin/client/client32.d)
 include $(wildcard bin/client/client64.d)
 
 bin:
-	mkdir -p bin/client bin/server
+	mkdir -p bin/client
 
 clean:
 	rm -rf bin

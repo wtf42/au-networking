@@ -260,17 +260,17 @@ int main(int argc, char *argv[]) {
     pthread_t socket_reader_thread;
     if (pthread_create(&socket_reader_thread, &attr, socket_reader, NULL)) {
         std::cerr << "failed to create socket reader thread" << std::endl;
-        return 0;
+        return 1;
     }
     pthread_t events_writer_thread;
     if (pthread_create(&events_writer_thread, &attr, events_writer, NULL)) {
         std::cerr << "failed to create events writer thread" << std::endl;
-        return 0;
+        return 1;
     }
     pthread_t commands_reader_thread;
     if (pthread_create(&commands_reader_thread, &attr, commands_reader, NULL)) {
         std::cerr << "failed to create commands reader thread" << std::endl;
-        return 0;
+        return 1;
     }
 
     pthread_attr_destroy(&attr);
