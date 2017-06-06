@@ -2,44 +2,45 @@
 #include <sstream>
 #include <queue>
 
-#include <thread>
-#include <mutex>
-#include <condition_variable>
 #include <atomic>
 
 #include "common.h"
 #include "stream_socket.h"
 #include "tcp_socket.h"
+#include "au_stream_socket.h"
 #include "messages.h"
 #include "protocol.h"
 
 
 enum state_t { WAIT, READY, EXIT };
 std::atomic<state_t> state;
-std::mutex state_change_mutex;
-std::condition_variable state_change_cv;
+pthread_mutex_t state_change_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t state_change_cv = PTHREAD_COND_INITIALIZER;
+pthread_scoped_lock_t state_change_lock() { return pthread_scoped_lock_t(&state_change_mutex); }
 
 void set_state(state_t new_state) {
-    std::lock_guard<std::mutex> lock(state_change_mutex);
+    auto lock = state_change_lock();
     state = new_state;
-    state_change_cv.notify_all();
+    pthread_cond_broadcast(&state_change_cv);
 }
 
-std::mutex stdio_mutex;
+pthread_mutex_t stdio_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_scoped_lock_t stdio_lock() { return pthread_scoped_lock_t(&stdio_mutex); }
 
 void print(std::string const &msg) {
-    std::lock_guard<std::mutex> lock(stdio_mutex);
+    auto lock = stdio_lock();
     std::cout << msg << std::endl;
 }
 
-std::mutex events_mutex;
 std::queue<std::string> events;
-std::condition_variable events_cv;
+pthread_mutex_t events_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t events_cv = PTHREAD_COND_INITIALIZER;
+pthread_scoped_lock_t events_lock() { return pthread_scoped_lock_t(&events_mutex); }
 
 void print_safe(std::string const &msg) {
-    std::lock_guard<std::mutex> lock(events_mutex);
+    auto lock = events_lock();
     events.push(msg);
-    events_cv.notify_one();
+    pthread_cond_signal(&events_cv);
 }
 
 std::unique_ptr<stream_client_socket> client_socket;
@@ -57,7 +58,7 @@ std::unique_ptr<stream_client_socket> client_socket;
 // exit - для корректного отключения от сервера и выхода из системы
 
 void help() {
-    std::lock_guard<std::mutex> lock(stdio_mutex);
+    auto lock = stdio_lock();
     std::cout << "available commands:" << std::endl
               << "  search [text]" << std::endl
               << "  post [text]" << std::endl
@@ -119,8 +120,10 @@ void *commands_reader(void*) {
     if (state == WAIT) {
         print("waiting for hello response...");
         {
-            std::unique_lock<std::mutex> lock(state_change_mutex);
-            state_change_cv.wait(lock, [] { return state != WAIT; });
+            auto lock = state_change_lock();
+            while (state == WAIT) {
+                pthread_cond_wait(&state_change_cv, lock.mutex);
+            }
         }
     }
 
@@ -130,7 +133,7 @@ void *commands_reader(void*) {
         std::string line;
         std::getline(std::cin, line);
         {
-            std::lock_guard<std::mutex> lock(stdio_mutex);
+            auto lock = stdio_lock();
             std::cout << ">";
             std::cout.flush();
             std::getline(std::cin, line);
@@ -148,8 +151,10 @@ void *events_writer(void*) {
 
         std::string text;
         {
-            std::unique_lock<std::mutex> lock(events_mutex);
-            events_cv.wait(lock, [] { return !events.empty(); });
+            auto lock = events_lock();
+            while (events.empty()) {
+                pthread_cond_wait(&events_cv, lock.mutex);
+            }
             text = events.front();
             events.pop();
         }
@@ -241,7 +246,13 @@ int main(int argc, char *argv[]) {
     connection_args args = parse_cmdline_args(argc, argv);
 
     try {
-        client_socket.reset(new tcp_client_socket(args.host, args.port));
+        if (args.au_stream_socket) {
+            srand(time(0));
+            au_stream_port port = au_stream_port(rand());
+            client_socket.reset(new au_stream_client_socket(args.host, port, args.port));
+        } else {
+            client_socket.reset(new tcp_client_socket(args.host, args.port));
+        }
         client_socket->connect();
     } catch (std::exception const &ex) {
         std::cerr << "failed to connect!" << std::endl
@@ -276,8 +287,10 @@ int main(int argc, char *argv[]) {
     pthread_attr_destroy(&attr);
 
     {
-        std::unique_lock<std::mutex> lock(state_change_mutex);
-        state_change_cv.wait(lock, []{ return state == EXIT; });
+        auto lock = state_change_lock();
+        while (state != EXIT) {
+            pthread_cond_wait(&state_change_cv, lock.mutex);
+        }
     }
 
     pthread_cancel(socket_reader_thread);
