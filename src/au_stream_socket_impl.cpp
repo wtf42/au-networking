@@ -1,10 +1,6 @@
 #include "au_stream_socket_impl.h"
 #include "au_stream_socket_utils.h"
 
-//#define LOGURU_IMPLEMENTATION 1
-//#include "loguru.hpp"
-#define LOG_F(t, ...) {}
-
 #include <signal.h>
 #include <deque>
 #include <mutex>
@@ -203,41 +199,6 @@ struct socket_state_t {
 };
 typedef socket_state_t *sock_t;
 
-
-
-
-std::string ssock(sock_t sock) {
-    std::stringstream ss;
-    ss << sock->src.port << " -> " << sock->dst.port
-       << "(state " << sock->state
-       << ",packets " << sock->packets.size()
-       << ",send seq " << sock->send_buffer.seq_num
-       << ",send size " << sock->send_buffer.buf.size()
-       << ",recv seq " << sock->recv_buffer.seq_num
-       << ",recv size " << sock->recv_buffer.buf.size()
-       << ")";
-    return ss.str();
-}
-std::string spacket(au_hdr_t const &hdr) {
-    std::stringstream ss;
-    ss << "from " << hdr.src_port
-       << " to " << hdr.dst_port
-       << "(flags " << int(hdr.flags)
-       << ",seq " << hdr.seq_number
-       << ",ack " << hdr.ack_number
-       << ",data " << hdr.data_len << ")";
-    return ss.str();
-}
-std::string stime(std::chrono::system_clock::time_point t) {
-    std::stringstream ss;
-    auto tmp = std::chrono::system_clock::to_time_t(t);
-    ss << std::ctime(&tmp);
-    return ss.str();
-}
-
-
-
-
 void *au_sockets_handler(void *arg) {
     reinterpret_cast<handler_t*>(arg)->handle();
     return nullptr;
@@ -268,19 +229,15 @@ void handler_t::handle() {
             auto lock = slock();
 
             if (FD_ISSET(sockfd, &rset)) {
-                //LOG_F(INFO, "select read");
                 handle_read();
             }
             if (FD_ISSET(sockfd, &wset)) {
-                //LOG_F(INFO, "select write");
                 handle_write();
             }
             if (cnt == 0) {
-                //LOG_F(INFO, "select timeout");
                 handle_timeout();
             }
             if (FD_ISSET(evfd, &rset)) {
-                //LOG_F(INFO, "select eventfd");
                 eventfd_t value;
                 eventfd_read(evfd, &value);
                 handle_events();
@@ -305,8 +262,6 @@ void handler_t::handle_read() {
     if (packet.ip_hdr()->ip_p != AU_PROTO) {
         throw au_socket_exception("invalid protocol");
     }
-
-    LOG_F(INFO, "packet: %s", spacket(*packet.au_hdr()).c_str());
 
     // client sockets
     for (auto& s : sockets) {
@@ -339,10 +294,6 @@ void handler_t::handle_write() {
                 it->write_hdr()->window_size = uint16_t(s.recv_buffer.window_size());
                 it->write_hdr()->ack_number = s.recv_buffer.seq_num;
 
-                LOG_F(INFO, "write (%s): %s",
-                      ssock(&s).c_str(),
-                      spacket(*it->write_hdr()).c_str());
-
                 it->send(sockfd);
                 it->sent = true;
                 if (it->write_hdr()->data_len) {
@@ -356,7 +307,6 @@ void handler_t::handle_write() {
                 if (!it->waitack) {
                     s.packets.erase(it);
                 }
-                LOG_F(INFO, "write (%s) end", ssock(&s).c_str());
                 return;
             }
         }
@@ -405,10 +355,6 @@ void handler_t::handle_idle() {
                                     s.send_buffer.buf.begin() + size);
             s.send_buffer.window_size -= size;
 
-            LOG_F(INFO, "idle (%s): %s",
-                  ssock(&s).c_str(),
-                  spacket(*packet.write_hdr()).c_str());
-
             pthread_cond_broadcast(&events);
         }
     }
@@ -449,14 +395,12 @@ timeval *handler_t::get_next_timeout() {
         next_timeout.tv_sec = 0;
         next_timeout.tv_usec = std::chrono::duration_cast<std::chrono::microseconds>(next - now).count();
         if (next_timeout.tv_usec < 0) next_timeout.tv_usec = 0;
-        LOG_F(INFO, "timeout: %d", next_timeout.tv_usec);
         return &next_timeout;
     }
     return NULL;
 }
 
 sock_t handler_t::client(hostname host, au_stream_port client_port, au_stream_port server_port) {
-    LOG_F(INFO, "client constructor %d -> %d", client_port, server_port);
     socket_state_t sock;
     sock.dst = get_addrinfo(host, server_port);
     sock.src.addr_len = 0;
@@ -467,7 +411,6 @@ sock_t handler_t::client(hostname host, au_stream_port client_port, au_stream_po
 }
 
 sock_t handler_t::server(hostname host, au_stream_port port) {
-    LOG_F(INFO, "server constructor %d", port);
     socket_state_t sock;
     sock.src = get_addrinfo(host, port);
     sock.dst.addr_len = 0;
@@ -478,7 +421,6 @@ sock_t handler_t::server(hostname host, au_stream_port port) {
 }
 
 void handler_t::connect(sock_t sock) {
-    LOG_F(INFO, "connect (%s)", ssock(sock).c_str());
     auto lock = slock();
     if (sock->state != WAITING) {
         return;
@@ -499,11 +441,9 @@ void handler_t::connect(sock_t sock) {
         }
         pthread_cond_wait(&events, lock.mutex);
     }
-    LOG_F(INFO, "connected!");
 }
 
 sock_t handler_t::accept(sock_t sock) {
-    LOG_F(INFO, "accept");
     auto lock = slock();
     while (true) {
         if (sock->state != LISTEN) {
@@ -512,7 +452,6 @@ sock_t handler_t::accept(sock_t sock) {
         if (!sock->accept_queue.empty()) {
             sock_t client = sock->accept_queue.front();
             sock->accept_queue.pop_front();
-            LOG_F(INFO, "accepted!");
             return client;
         }
         pthread_cond_wait(&events, lock.mutex);
@@ -521,7 +460,6 @@ sock_t handler_t::accept(sock_t sock) {
 }
 
 void handler_t::send(sock_t sock, const void* buf, size_t size) {
-    LOG_F(INFO, "send (%s) %d bytes", ssock(sock).c_str(), int(size));
     auto lock = slock();
     size_t sent = 0;
     while (sent < size) {
@@ -537,19 +475,15 @@ void handler_t::send(sock_t sock, const void* buf, size_t size) {
                                          cbuf + sent + available);
             sent += available;
             wake();
-            LOG_F(INFO, "send (%s) sent %d bytes", ssock(sock).c_str(), int(available));
             if (sent >= size) {
-                LOG_F(INFO, "send (%s) ok", ssock(sock).c_str());
                 return;
             }
         }
         pthread_cond_wait(&events, lock.mutex);
     }
-    LOG_F(INFO, "send (%s) ok", ssock(sock).c_str());
 }
 
 void handler_t::recv(sock_t sock, void* buf, size_t size) {
-    LOG_F(INFO, "recv (%s) %d bytes", ssock(sock).c_str(), int(size));
     auto lock = slock();
     size_t received = 0;
     while (received < size) {
@@ -567,9 +501,7 @@ void handler_t::recv(sock_t sock, void* buf, size_t size) {
                                         sock->recv_buffer.buf.begin() + available);
             received += available;
             wake();
-            LOG_F(INFO, "recv (%s) got %d bytes", ssock(sock).c_str(), int(available));
             if (received >= size) {
-                LOG_F(INFO, "recv (%s) ok", ssock(sock).c_str());
                 return;
             }
         }
@@ -578,7 +510,6 @@ void handler_t::recv(sock_t sock, void* buf, size_t size) {
 }
 
 void handler_t::close(sock_t sock) {
-    LOG_F(INFO, "close %s", ssock(sock).c_str());
     auto lock = slock();
 
     packet_t &packet = next_packet(sock);
@@ -604,7 +535,6 @@ void remove_timeout(std::list<timeout_t> &lst, packet_t *packet) {
 }
 
 void handler_t::handle_packet(sock_t sock, packet_t const& packet) {
-    LOG_F(INFO, "read (%s): %s", ssock(sock).c_str(), spacket(*packet.au_hdr()).c_str());
     auto hdr = packet.au_hdr();
 
     switch (sock->state) {
@@ -624,7 +554,6 @@ void handler_t::handle_packet(sock_t sock, packet_t const& packet) {
                 sock_data.send_buffer.window_size = hdr->window_size;
                 sock_t sock_new = &*sockets.insert(sockets.end(), sock_data);
                 sock->accept_queue.push_back(sock_new);
-                LOG_F(INFO, "new sock: %s", ssock(sock_new).c_str());
 
                 packet_t &ans_packet = next_packet(sock_new);
                 ans_packet.write_hdr()->flags |= SYN_FLAG | ACK_FLAG;
@@ -646,10 +575,7 @@ void handler_t::handle_packet(sock_t sock, packet_t const& packet) {
                         it = sock->packets.erase(it);
                         ++removed;
                     }
-                    LOG_F(INFO, "got ack %d -> %d (-%d)", expected, actual, removed);
                     expected = actual;
-                } else {
-                    LOG_F(INFO, "old ack seq");
                 }
             }
             if (hdr->data_len) {
@@ -677,17 +603,12 @@ void handler_t::handle_packet(sock_t sock, packet_t const& packet) {
                         }
                     }
                     pthread_cond_broadcast(&events);
-                } else {
-                    LOG_F(INFO, "old recv seq %d ~ %d",
-                          hdr->seq_number,
-                          sock->recv_buffer.seq_num);
                 }
 
                 packet_t &answer = ack_packet(sock);
                 answer.write_hdr()->flags |= ACK_FLAG;
             }
             if (hdr->flags & FIN_FLAG) {
-                LOG_F(INFO, "FIN (%s)", ssock(sock).c_str());
                 sock->state = CLOSED;
                 sock->state_changed = true;
                 pthread_cond_broadcast(&events);
@@ -701,7 +622,6 @@ void handler_t::handle_packet(sock_t sock, packet_t const& packet) {
             break;
         }
         case SYN_SENT: {
-            LOG_F(INFO, "SYN_SENT %d", hdr->flags);
             // предусловие состояния - мы отправили один syn
             // ждем syn+ack
 
@@ -722,7 +642,6 @@ void handler_t::handle_packet(sock_t sock, packet_t const& packet) {
             break;
         }
         case SYN_RECEIVED: {
-            LOG_F(INFO, "SYN_RECEIVED %d", hdr->flags);
             // предусловие состояния - мы получили один syn,
             // после чего отправили syn+ack, но хз дошел ли он
 
@@ -754,7 +673,6 @@ void handler_t::handle_packet(sock_t sock, packet_t const& packet) {
             break;
         }
     }
-    LOG_F(INFO, "read (%s) end", ssock(sock).c_str());
 }
 
 uint32_t next_send_seq(sock_t sock) {
@@ -796,7 +714,6 @@ packet_t& handler_t::ack_packet(sock_t sock) {
 }
 
 void handler_t::handle_timeout(sock_t sock, timeout_t const& event) {
-    LOG_F(INFO, "timeout! %s < %s", stime(system_clock::now()).c_str(), stime(event.time).c_str());
     if (sock->state != ESTABLISHED) return;
     if (event.type != ACK_EVENT) return;
     for (auto &p : sock->packets) {
@@ -806,7 +723,6 @@ void handler_t::handle_timeout(sock_t sock, timeout_t const& event) {
 }
 
 void handler_t::handle_state_change(sock_t sock) {
-    LOG_F(INFO, "state change: %s", ssock(sock).c_str());
     sock->state_changed = false;
     pthread_cond_broadcast(&events);
 }
