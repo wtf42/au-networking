@@ -1,38 +1,40 @@
 #include <iostream>
 #include <set>
-#include <mutex>
 
 #include <pthread.h>
 
 #include "common.h"
 #include "stream_socket.h"
 #include "tcp_socket.h"
+#include "au_stream_socket.h"
 
 #include "client_handler.h"
 
 
-std::mutex stdio_mutex;
+pthread_mutex_t stdio_mutex = PTHREAD_MUTEX_INITIALIZER;
 void print(std::string const &msg) {
-    std::lock_guard<std::mutex> lock(stdio_mutex);
+    pthread_mutex_lock(&stdio_mutex);
     std::cout << msg << std::endl;
+    pthread_mutex_unlock(&stdio_mutex);
 }
 
 
-std::mutex threads_mutex;
+pthread_mutex_t threads_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_scoped_lock_t threads_lock() { return pthread_scoped_lock_t(&threads_mutex); }
 std::set<pthread_t> threads;
 
 
 void *client_handler_func(void *arg) {
     {
         // waiting to store thread_id to set
-        std::lock_guard<std::mutex> lock(threads_mutex);
+        auto lock = threads_lock();
     }
 
     // removes thread_id from set when client disconnects
     struct thread_holder_t
     {
         ~thread_holder_t() {
-            std::lock_guard<std::mutex> lock(threads_mutex);
+            auto lock = threads_lock();
             threads.erase(thread);
         }
         pthread_t thread;
@@ -60,17 +62,13 @@ void *socket_listener_func(void *arg) {
             print("new client connected!");
 
             {
-                std::lock_guard<std::mutex> lock(threads_mutex);
+                auto lock = threads_lock();
                 pthread_t thread;
-                pthread_attr_t attr;
-                pthread_attr_init(&attr);
-                pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
                 if (pthread_create(&thread, NULL, client_handler_func, client_socket)) {
                     std::cerr << "failed to create thread!" << std::endl;
                 } else {
                     threads.insert(thread);
                 }
-                pthread_attr_destroy(&attr);
             }
         }
     } catch (std::exception const &ex) {
@@ -90,7 +88,11 @@ int main(int argc, char *argv[]) {
     std::unique_ptr<stream_server_socket> socket;
 
     try {
-        socket.reset(new tcp_server_socket(args.host, args.port));
+        if (args.au_stream_socket) {
+            socket.reset(new au_stream_server_socket(args.host, args.port));
+        } else {
+            socket.reset(new tcp_server_socket(args.host, args.port));
+        }
     } catch (std::exception const &ex) {
         std::cerr << "failed to create server socket!" << std::endl
                   << ex.what() << std::endl;
@@ -98,14 +100,10 @@ int main(int argc, char *argv[]) {
     }
 
     pthread_t listener_thread;
-    pthread_attr_t attr;
-    pthread_attr_init(&attr);
-    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
-    if (pthread_create(&listener_thread, &attr, socket_listener_func, socket.release())) {
+    if (pthread_create(&listener_thread, NULL, socket_listener_func, socket.release())) {
         std::cerr << "failed to create socket listener thread" << std::endl;
         return 1;
     }
-    pthread_attr_destroy(&attr);
 
     print("started! press enter to stop server\n");
 
@@ -116,7 +114,7 @@ int main(int argc, char *argv[]) {
 
     std::set<pthread_t> threads;
     {
-        std::lock_guard<std::mutex> lock(threads_mutex);
+        auto lock = threads_lock();
         threads = ::threads;
     }
 
