@@ -65,6 +65,7 @@ private:
     bool need_write(sock_t sock);
     timeval *get_next_timeout();
     packet_t &next_packet(sock_t sock);
+    packet_t &ack_packet(sock_t sock);
 
     pthread_scoped_lock_t slock();
     void wake();
